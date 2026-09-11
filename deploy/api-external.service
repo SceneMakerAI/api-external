@@ -1,0 +1,19 @@
+[Unit]
+Description=API External — SceneMaker 외부 공개 API 게이트웨이 (FastAPI/uvicorn, agent-stt·agent-compose 프록시 + 상태 조회)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# 이 서버는 소스·로그·.env 가 전부 root 소유라 root 로 돈다. 전용 계정을 만들면 User/Group 과 소유권을 같이 바꾼다.
+User=root
+Group=root
+WorkingDirectory=/usr/service/source/scenemaker/api/api-external
+# main.py 가 .env(HOST/PORT) 를 읽어 uvicorn 을 띄운다 — 포트를 유닛에 적지 않는다.
+ExecStart=/usr/service/source/scenemaker/api/api-external/.venv/bin/python main.py
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target
