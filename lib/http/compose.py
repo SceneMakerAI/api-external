@@ -15,7 +15,7 @@ from lib.client import proxy
 router = APIRouter(prefix="/v1", tags=["compose"])
 
 
-@router.post("/compose")
+@router.post("/search_svc")
 def compose(request: Request):
     state = request.app.state
     return proxy.forward(state.http, state.compose_upstream, request, path=config.COMPOSE_PATH)
