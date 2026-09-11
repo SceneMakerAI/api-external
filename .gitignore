@@ -1,0 +1,39 @@
+# ── 비밀값 (절대 커밋 금지)
+.env
+.env.*
+!.env.example
+
+# 인증서 / 개인키
+*.pem
+*.key
+*.crt
+*.cer
+*.der
+*.p12
+*.pfx
+*.jks
+id_rsa*
+id_ed25519*
+
+# ── Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.Python
+build/
+dist/
+
+# ── 가상환경 / uv
+.venv/
+
+# ── 에디터 / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# ── 테스트 / 캐시
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/

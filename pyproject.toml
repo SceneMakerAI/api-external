@@ -1,0 +1,13 @@
+[project]
+name = "api-external"
+version = "0.1.0"
+description = "외부 공개 API 게이트웨이 — agent-stt / agent-compose 로 라우팅하는 reverse proxy"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.115.0",
+    "httpx>=0.28.1",
+    "pymysql>=1.2.0",
+    "python-dotenv>=1.2.2",
+    "uvicorn>=0.34.0",
+]
