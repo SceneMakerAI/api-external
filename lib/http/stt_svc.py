@@ -13,8 +13,7 @@ router = APIRouter(prefix="/api/v1", tags=["stt_svc"])
 
 
 @router.post("/stt_svc")
-@router.post("/stt_svc/{rest:path}")      # /stt_svc 뒤에 오는 경로 전부 — /stt_svc/a/b → 뒷단 /api/v1/pre_svc/a/b
-def stt_svc(request: Request, rest: str = ""):
+@router.post("/stt_svc/{rest:path}")      # /stt_svc 뒤에 뭐가 붙어도 받는다 — rest 는 인자로 안 받아 무시되고, 뒷단엔 path= 로 준 STT_PATH_PRE 만 간다
+def stt_svc(request: Request):
     state = request.app.state
-    path = config.STT_PATH_PRE + (f"/{rest}" if rest else "")
-    return proxy.forward(state.http, state.stt_upstream, request, path=path)
+    return proxy.forward(state.http, state.stt_upstream, request, path=config.STT_PATH_PRE)

@@ -16,8 +16,7 @@ router = APIRouter(prefix="/api/v1", tags=["compose"])
 
 
 @router.post("/search_svc")
-@router.post("/search_svc/{rest:path}")      # /search_svc 뒤에 오는 경로 전부 — /search_svc/a → 뒷단 /api/v1/compose/a
-def compose(request: Request, rest: str = ""):
+@router.post("/search_svc/{rest:path}")      # /search_svc 뒤에 뭐가 붙어도 받는다 — rest 는 인자로 안 받아 무시되고, 뒷단엔 path= 로 준 COMPOSE_PATH 만 간다
+def compose(request: Request):
     state = request.app.state
-    path = config.COMPOSE_PATH + (f"/{rest}" if rest else "")
-    return proxy.forward(state.http, state.compose_upstream, request, path=path)
+    return proxy.forward(state.http, state.compose_upstream, request, path=config.COMPOSE_PATH)
