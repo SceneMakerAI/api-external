@@ -54,6 +54,7 @@ class StatusComposeResponse(BaseModel):
 
 
 @router.get("/status_compose", response_model=StatusComposeResponse,  response_model_exclude_unset=True)     # 요청에서 준 필드 + code/result 만 내보낸다
+@router.get("/status_compose/{rest:path}", response_model=StatusComposeResponse,  response_model_exclude_unset=True)   # 뒤 경로는 받기만 (조회에 안 쓰므로 인자로도 안 받는다)
 def status_compose(req: Annotated[StatusComposeRequest, Query()]):
     log.info(f"status_compose 조회: v_id={req.v_id} stream_id={req.stream_id!r} search_id={req.search_id!r}")
     composes = _select(req)      # 동기 핸들러라 FastAPI 가 스레드풀에서 돌린다 — 블로킹(DB) 그대로 호출

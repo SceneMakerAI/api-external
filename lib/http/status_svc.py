@@ -36,6 +36,7 @@ class StatusResponse(BaseModel):
 
 
 @router.get("/status", response_model=StatusResponse, response_model_exclude_unset=True)
+@router.get("/status/{rest:path}", response_model=StatusResponse, response_model_exclude_unset=True)   # /status 뒤 경로는 받기만 (조회에 안 쓰므로 인자로도 안 받는다)
 def status_svc(req: Annotated[StatusRequest, Query()]):
     log.info(f"status 조회: v_id={req.v_id} stream_id={req.stream_id!r}")
     files = _select(req)      # 동기 핸들러라 FastAPI 가 스레드풀에서 돌린다 — 블로킹(DB) 그대로 호출
