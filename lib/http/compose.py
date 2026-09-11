@@ -12,7 +12,7 @@ from fastapi import APIRouter, Request
 import config
 from lib.client import proxy
 
-router = APIRouter(prefix="/v1", tags=["compose"])
+router = APIRouter(prefix="/api/v1", tags=["compose"])
 
 
 @router.post("/search_svc")
