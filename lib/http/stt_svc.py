@@ -9,7 +9,7 @@ from fastapi import APIRouter, Request
 import config
 from lib.client import proxy
 
-router = APIRouter(prefix="/api/v1", tags=["stt_svc"])
+router = APIRouter(prefix="/v1", tags=["stt_svc"])
 
 
 @router.post("/stt_svc")

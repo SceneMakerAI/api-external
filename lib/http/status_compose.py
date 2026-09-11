@@ -17,7 +17,7 @@ from lib.log import get_logger
 from lib.rdb import t_compose
 from lib.rdb.rdb import connect
 
-router = APIRouter(prefix="/api/v1", tags=["status_compose"])
+router = APIRouter(prefix="/v1", tags=["status_compose"])
 log = get_logger(__name__)
 
 
