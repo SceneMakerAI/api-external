@@ -15,7 +15,6 @@ from pydantic import BaseModel, Field, model_validator
 
 from lib.log import get_logger
 from lib.rdb import t_compose
-from lib.rdb.rdb import connect
 
 router = APIRouter(prefix="/api/v1", tags=["status_compose"])
 log = get_logger(__name__)
@@ -57,14 +56,9 @@ class StatusComposeResponse(BaseModel):
 @router.get("/status_compose/{rest:path}", response_model=StatusComposeResponse,  response_model_exclude_unset=True)   # 뒤 경로는 받기만 (조회에 안 쓰므로 인자로도 안 받는다)
 def status_compose(req: Annotated[StatusComposeRequest, Query()]):
     log.info(f"status_compose 조회: v_id={req.v_id} stream_id={req.stream_id!r} search_id={req.search_id!r}")
-    composes = _select(req)      # 동기 핸들러라 FastAPI 가 스레드풀에서 돌린다 — 블로킹(DB) 그대로 호출
+    composes = t_compose.select_composes(req.v_id, req.stream_id, req.search_id)      # 동기 핸들러라 FastAPI 가 스레드풀에서 돌린다 — 블로킹(DB) 그대로 호출. 연결은 select_composes 가 연다
 
     given = req.model_dump(exclude_defaults=True)
     if not composes:
         return StatusComposeResponse(**given, code=-1, result="fail")
     return StatusComposeResponse(**given, code=composes[0]["status_code"], result=composes[0]["status_name"])
-
-
-def _select(req: StatusComposeRequest) -> list[dict]:
-    with connect() as conn, conn.cursor() as cur:
-        return t_compose.select_composes(cur, req.v_id, req.stream_id, req.search_id)

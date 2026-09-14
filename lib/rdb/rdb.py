@@ -26,6 +26,7 @@ def connect():
         database=config.RDB_NAME,
         charset="utf8mb4",
         autocommit=False,
+        cursorclass=pymysql.cursors.DictCursor,   # 행을 dict 로 — t_*.py 에서 cols/zip 안 해도 된다
     )
     try:
         yield conn

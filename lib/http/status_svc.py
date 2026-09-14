@@ -14,7 +14,6 @@ from pydantic import BaseModel, Field
 
 from lib.log import get_logger
 from lib.rdb import t_video_file
-from lib.rdb.rdb import connect
 
 router = APIRouter(prefix="/api/v1", tags=["status_svc"])
 log = get_logger(__name__)
@@ -39,13 +38,8 @@ class StatusResponse(BaseModel):
 @router.get("/status/{rest:path}", response_model=StatusResponse, response_model_exclude_unset=True)   # /status 뒤 경로는 받기만 (조회에 안 쓰므로 인자로도 안 받는다)
 def status_svc(req: Annotated[StatusRequest, Query()]):
     log.info(f"status 조회: v_id={req.v_id} stream_id={req.stream_id!r}")
-    files = _select(req)      # 동기 핸들러라 FastAPI 가 스레드풀에서 돌린다 — 블로킹(DB) 그대로 호출
+    files = t_video_file.select_video_files(req.v_id, req.stream_id)      # 동기 핸들러라 FastAPI 가 스레드풀에서 돌린다 — 블로킹(DB) 그대로 호출. 연결은 select_video_files 가 연다
     # code ← status_code / result ← t_code.name. PK 조회라 한 건 이하. 없으면 -1 / "fail" (agent-stt 응답 관례).
     if not files:
         return StatusResponse(v_id=req.v_id, stream_id=req.stream_id, code=-1, result="fail")
     return StatusResponse(v_id=req.v_id, stream_id=req.stream_id, code=files[0]["status_code"], result=files[0]["status_name"])
-
-
-def _select(req: StatusRequest) -> list[dict]:
-    with connect() as conn, conn.cursor() as cur:
-        return t_video_file.select_video_files(cur, req.v_id, req.stream_id)
