@@ -20,7 +20,7 @@ log = get_logger(__name__)
 
 # 공정 중으로 보는 status_code 범위 (초과, 미만) — 정확한 값은 추후 확정. 지금은 하드코딩.
 #   select_video_files 의 where_query 로 그대로 붙는 SQL 조각 (f = t_video_file 별칭).
-_BUSY_WHERE = ("AND ((f.status_code > 2011 AND f.status_code < 2090) "
+_BUSY_WHERE = ("AND ((f.status_code > 2000 AND f.status_code < 2090) "
                "OR (f.status_code > 3000 AND f.status_code < 3090))")
 
 
