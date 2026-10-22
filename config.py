@@ -26,7 +26,7 @@ RDB_NAME = os.getenv("RDB_NAME")
 
 # ① agent-stt — 자막 공정
 STT_UPSTREAM: list[str] = json.loads(os.getenv("STT_UPSTREAM"))
-STT_PATH_PRE = "/api/v1/pre_svc"      # 외부 /api/v1/stt_svc → agent-stt 진입점 (등록 → download → ffmpeg). 뒷단 경로 바뀌면 여기만.
+STT_PATH_PRE = "/api/v1/pre_svc"      # 외부 /api/v1/video_file → agent-stt 진입점 (등록 → download → ffmpeg). 뒷단 경로 바뀌면 여기만.
 
 # ② agent-compose — 질의 기반 하이라이트 편성
 COMPOSE_UPSTREAM: list[str] = json.loads(os.getenv("COMPOSE_UPSTREAM"))

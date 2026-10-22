@@ -7,12 +7,13 @@ FastAPI app 생성 + 라우터 등록만. 로직은 lib/ 계층에 둠 (agent-st
 
 뒷단:
   ① agent-stt      config.STT_UPSTREAM
-       외부 POST /api/v1/stt_svc  →  agent-stt POST /api/v1/pre_svc (최초 호출: 등록 → download → ffmpeg)
+       외부 POST /api/v1/video_file  →  agent-stt POST /api/v1/pre_svc (최초 호출: 등록 → download → ffmpeg)
   ② agent-compose  config.COMPOSE_UPSTREAM
        외부 POST /api/v1/compose  →  agent-compose POST /api/v1/compose (편성 접수, 결과는 callback_url 로)
   upstream 은 nginx 처럼 서버 배열 (.env 의 *_UPSTREAM JSON 배열) — 라운드로빈으로 돌린다.
   ③ status_svc     GET /api/v1/status — 프록시 아님. DB(t_video_file) 에서 자막 공정 상태를 직접 조회 (lib/http/status_svc.py)
   ④ status_compose GET /api/v1/status_compose — 프록시 아님. DB(t_compose) 에서 편성 상태를 직접 조회 (lib/http/status_compose.py)
+  ⑤ video_group    /api/v1/video_group — 프록시 아님. DB(t_video_group) CRUD — 그룹(시리즈·경기) 등록 (lib/http/video_group.py)
 
 가공 없음 — 받은 요청을 그대로 넘기고 응답을 그대로 돌려준다. 요청/응답 본문은 로그에 찍는다.
 
@@ -28,7 +29,7 @@ from fastapi import FastAPI
 
 import config
 from lib.client import proxy
-from lib.http import compose, http_util, status_compose, status_svc, stt_svc
+from lib.http import compose, http_util, status_compose, status_svc, video, video_file, video_group
 from lib.log import get_logger
 
 log = get_logger(__name__)
@@ -40,10 +41,12 @@ app.state.http = httpx.Client(timeout=httpx.Timeout(config.PROXY_TIMEOUT_S))
 app.state.stt_upstream = proxy.round_robin(config.STT_UPSTREAM)
 app.state.compose_upstream = proxy.round_robin(config.COMPOSE_UPSTREAM)
 
-app.include_router(stt_svc.router)
+app.include_router(video_file.router)
 app.include_router(compose.router)
 app.include_router(status_svc.router)
 app.include_router(status_compose.router)
+app.include_router(video_group.router)
+app.include_router(video.router)
 http_util.register(app)
 
 log.info(f"api_external up: {config.HOST}:{config.PORT} "

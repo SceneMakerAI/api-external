@@ -12,6 +12,7 @@ from typing import Annotated
 from fastapi import APIRouter, Query
 from pydantic import BaseModel, Field
 
+from lib.http import schema_resp
 from lib.log import get_logger
 from lib.rdb import t_video_file
 
@@ -26,12 +27,10 @@ class StatusRequest(BaseModel):
     stream_id: str = Field(..., max_length=20)
 
 
-class StatusResponse(BaseModel):
+class StatusResponse(schema_resp.Resp_Base):
     """t_video_file 한 행의 상태 — 요청 키 + code(status_code) / result(t_code.name)."""
     v_id: int
     stream_id: str
-    code: int
-    result: str | None = None
 
 
 @router.get("/status", response_model=StatusResponse, response_model_exclude_unset=True)

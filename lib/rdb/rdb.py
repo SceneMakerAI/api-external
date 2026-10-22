@@ -3,11 +3,12 @@
   - 연결은 요청마다 새로 연다 (with connect()). 조회 한 번이면 끝나므로 짧게 열고 닫는다.
   - with 블록 정상 종료 → commit, 예외 → rollback, 항상 close.
 
-테이블별 조회는 t_*.py(커서 받음).
+테이블별 CRUD 는 t_*.py (연결은 각 함수 안에서 연다).
 """
 from contextlib import contextmanager
 
 import pymysql
+from pymysql.constants import CLIENT
 
 import config
 from lib.log import get_logger
@@ -27,6 +28,7 @@ def connect():
         charset="utf8mb4",
         autocommit=False,
         cursorclass=pymysql.cursors.DictCursor,   # 행을 dict 로 — t_*.py 에서 cols/zip 안 해도 된다
+        client_flag=CLIENT.FOUND_ROWS,            # UPDATE 반환 = 매칭 행 수 (값이 같아도 센다) — 0 이면 '없는 행' 으로 봐도 된다
     )
     try:
         yield conn
