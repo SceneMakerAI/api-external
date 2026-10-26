@@ -1,0 +1,170 @@
+# 공급망 점검 ① PR — 신규 의존성을 병합 전에 확인한다
+# 가이드라인 3장 4절 "PR에서 신규 의존성을 먼저 차단한다"
+#   - GitHub dependency review: 이 PR이 추가·변경하는 의존성의 취약점·라이선스 판정
+#   - BomLens 스캔: 병합 후 상태의 SBOM 미리보기 + Critical 취약점 알림(exceptions.md 반영, 실패시키지 않음). 금지 라이선스는 위 dependency review가 차단
+#     차단은 ③ 릴리즈 게이트에서만 한다. PR에서는 "이대로 릴리즈하면 막힌다"를 미리 알려 준다.
+# 차단 기준은 정책(위키 1. 정책 및 역할)과 맞춘다. 처음에는 Critical·GPL-3.0/AGPL-3.0만 차단한다.
+name: supply-chain-pr
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  BOMLENS_VERSION: "1.13.7"   # 스캐너 버전 고정 (가이드라인 3장 10절). 올릴 때는 검토 후 함께 바꾼다
+
+jobs:
+  dependency-review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write     # 실패 시 PR에 요약 댓글 (comment-summary-in-pr)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      # 예외 승인 반영: exceptions.md의 유효한 예외(GHSA·purl)를 allow-ghsas·allow-dependencies-licenses로 붙인 설정 사본을 만든다.
+      # 예외 기록은 exceptions.md 한 곳뿐이다. 만료일이 지나면 PR 점검도 다시 실패한다.
+      - name: 예외 승인 반영 (exceptions.md → allow-ghsas)
+        run: |
+          if grep -Eq '^(allow-ghsas|allow-dependencies-licenses)' .github/dependency-review-config.yml; then
+            echo "::error::allow-ghsas·allow-dependencies-licenses를 dependency-review-config.yml에 직접 쓰지 않는다. 예외는 docs/supply-chain/exceptions.md에 기록한다."
+            exit 1
+          fi
+          CFG=./dependency-review-merged.yml
+          cp .github/dependency-review-config.yml "$CFG"
+          IDS=$(python3 scripts/supply-chain/vuln_gate.py --allowed-ghsa --exceptions docs/supply-chain/exceptions.md)
+          if [ -n "$IDS" ]; then
+            printf '\nallow-ghsas:\n' >> "$CFG"
+            for g in $IDS; do printf '  - %s\n' "$g" >> "$CFG"; done
+          fi
+          PURLS=$(python3 scripts/supply-chain/vuln_gate.py --allowed-purl --exceptions docs/supply-chain/exceptions.md)
+          if [ -n "$PURLS" ]; then
+            printf '\nallow-dependencies-licenses:\n' >> "$CFG"
+            for u in $PURLS; do printf '  - %s\n' "$u" >> "$CFG"; done
+          fi
+          echo "예외 승인으로 허용한 GHSA: ${IDS:-없음}" >> "$GITHUB_STEP_SUMMARY"
+          echo "예외 승인으로 허용한 라이선스(purl): ${PURLS:-없음}" >> "$GITHUB_STEP_SUMMARY"
+      # 공개 저장소는 무료. 비공개 저장소는 GitHub Advanced Security(Code Security)가 필요하다.
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          # 기준은 .github/dependency-review-config.yml (CODEOWNERS로 변경 시 승인 필요) + 위 단계의 예외 반영
+          config-file: ./dependency-review-merged.yml
+
+  sbom-preview:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      pull-requests: write     # 취약점 알림을 PR 댓글로 남긴다
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: BomLens 준비
+        run: |
+          git clone --depth 1 --branch "v${BOMLENS_VERSION}" https://github.com/sktelecom/bomlens.git "$RUNNER_TEMP/bomlens"
+          docker pull "ghcr.io/sktelecom/bomlens:${BOMLENS_VERSION}"
+      - name: SBOM·취약점 스캔
+        env:
+          SBOM_SCANNER_IMAGE: ghcr.io/sktelecom/bomlens:${{ env.BOMLENS_VERSION }}
+        run: |
+          VER="pr${{ github.event.pull_request.number }}-$(git rev-parse --short=7 HEAD)"
+          "$RUNNER_TEMP/bomlens/scripts/scan-sbom.sh" \
+            --project "${{ github.event.repository.name }}" --version "$VER" \
+            --sbom-author "Solbox Inc." \
+            --output-dir "$RUNNER_TEMP/sbom" \
+            --all --generate-only \
+            --fail-on empty-result
+      # 취약점 알림: 기준 이상 취약점 중 유효한 예외가 없는 것이 있으면 PR 화면에 경고를 남긴다
+      - name: 취약점 알림 (예외 반영, 실패시키지 않음)
+        run: |
+          REPO="${{ github.event.repository.name }}"
+          VER="pr${{ github.event.pull_request.number }}-$(git rev-parse --short=7 HEAD)"
+          D="$RUNNER_TEMP/sbom/${REPO}_${VER}"
+          python3 scripts/supply-chain/vuln_gate.py --report-only --severity critical \
+            --security "$D/${REPO}_${VER}_security.json" \
+            --exceptions docs/supply-chain/exceptions.md \
+            --json-out "$RUNNER_TEMP/pr-gate.json" \
+            ${{ github.event.repository.private && ' ' || '--redact' }}
+          [ -f "$RUNNER_TEMP/pr-gate.json" ] || exit 0
+          N=$(jq '.blocked | length' "$RUNNER_TEMP/pr-gate.json")
+          E=$(jq '.excepted | length' "$RUNNER_TEMP/pr-gate.json")
+          if [ "$N" -gt 0 ]; then
+            echo "::warning title=공급망 취약점 ${N}건::Critical 이상 취약점 ${N}건이 예외 승인 없이 남아 있다. 이대로 릴리즈하면 게이트에서 차단된다. 업그레이드하거나 예외 절차를 밟는다."
+          elif [ "$E" -gt 0 ]; then
+            echo "::notice title=예외 승인 적용 ${E}건::Critical 이상 취약점 ${E}건이 exceptions.md의 유효한 예외로 처리된다."
+          fi
+      # PR 댓글: 위 판정을 PR 대화창에 남긴다. 댓글은 하나만 두고 push할 때마다 고쳐 쓴다.
+      # 비공개 저장소는 상세 표, 공개 저장소는 건수만. 포크에서 온 PR은 권한이 없어 건너뛴다.
+      - name: PR 댓글 (취약점 알림)
+        if: always() && github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          PRIVATE: ${{ github.event.repository.private }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          J="$RUNNER_TEMP/pr-gate.json"
+          L="$RUNNER_TEMP/pr-license.json"
+          N=0; E=0; LB=0; LE=0
+          if [ -f "$J" ]; then N=$(jq '.blocked | length' "$J"); E=$(jq '.excepted | length' "$J"); fi
+          if [ -f "$L" ]; then LB=$(jq '.blocked | length' "$L"); LE=$(jq '.excepted | length' "$L"); fi
+          MARK='<!-- supply-chain-alert -->'
+          OLD=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" --paginate \
+                  --jq ".[] | select(.body | startswith(\"$MARK\")) | .id" | head -1)
+          if [ $((N + E + LB + LE)) -eq 0 ] && [ -z "$OLD" ]; then exit 0; fi
+          {
+            echo "$MARK"
+            if [ "$N" -gt 0 ]; then
+              echo "### 공급망 취약점 ${N}건 (예외 승인 없음)"
+              echo "Critical 이상 취약점 ${N}건이 남아 있습니다. **이대로 릴리즈하면 게이트에서 차단됩니다.**"
+              echo "업그레이드하거나 예외 절차(\`docs/supply-chain/exceptions.md\`)를 밟으세요. 이 PR의 병합은 막지 않습니다."
+            elif [ "$E" -gt 0 ]; then
+              echo "### 취약점 예외 승인 적용 ${E}건"
+              echo "Critical 이상 취약점 ${E}건이 \`exceptions.md\`의 유효한 예외로 처리됩니다. 만료일 전에 업그레이드로 조치하세요."
+            else
+              echo "### 공급망 취약점: Critical 없음"
+            fi
+            if [ "$PRIVATE" = "true" ] && [ $((N + E)) -gt 0 ]; then
+              echo
+              echo "| 판정 | 식별자 | 구성요소 | 수정 버전 | 예외번호 |"
+              echo "|---|---|---|---|---|"
+              jq -r '.blocked[] | "| 차단 | \(.id) | \(.pkg) \(.ver) | \(.fix) | |"' "$J"
+              jq -r '.excepted[] | "| 예외 | \(.id) | \(.pkg) \(.ver) | \(.fix) | \(.exception) |"' "$J"
+            fi
+            if [ -f "$L" ]; then
+            echo
+            if [ "$LB" -gt 0 ]; then
+              echo "### 금지 라이선스 ${LB}건 (예외 승인 없음)"
+              echo "GPL·AGPL 계열 구성요소가 있습니다. **이대로 릴리즈하면 게이트에서 차단됩니다.** 다른 라이브러리로 바꾸거나, 법무 검토 후 예외(식별자에 purl)를 등록하세요."
+            elif [ "$LE" -gt 0 ]; then
+              echo "### 금지 라이선스 예외 승인 적용 ${LE}건"
+            else
+              echo "### 라이선스: 금지 라이선스 없음"
+            fi
+            if [ $((LB + LE)) -gt 0 ]; then
+              echo
+              echo "| 판정 | 구성요소 | 라이선스 | purl | 예외번호 |"
+              echo "|---|---|---|---|---|"
+              jq -r '.blocked[] | "| 차단 | \(.name) \(.ver) | \(.license) | \(.purl) | |"' "$L"
+              jq -r '.excepted[] | "| 예외 | \(.name) \(.ver) | \(.license) | \(.purl) | \(.exception) |"' "$L"
+            fi
+            fi
+            echo
+            echo "점검 실행: $RUN_URL"
+          } > "$RUNNER_TEMP/pr-comment.md"
+          if [ -n "$OLD" ]; then
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$OLD" -F body=@"$RUNNER_TEMP/pr-comment.md" > /dev/null
+          else
+            gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/pr-comment.md"
+          fi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sbom-pr
+          path: ${{ runner.temp }}/sbom/*/*_bom.json
+          retention-days: 14
