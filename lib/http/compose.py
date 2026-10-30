@@ -46,7 +46,7 @@ class ReqCompose(BaseModel):
     """POST 본문. videos 를 빼면 그룹 전체."""
     v_g_id: int = Field(..., gt=0)
     videos: list[ReqComposeVideo] | None = Field(None, min_length=1)
-    query: str = Field(..., min_length=1, max_length=200)
+    query: str = Field(..., min_length=1, max_length=1000)
     budget_sec: int | None = Field(None, gt=0)
     callback_url: str | None = Field(None, max_length=200)
 

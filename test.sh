@@ -71,7 +71,7 @@ curl -X POST http://127.0.0.1:19000/api/v1/video_group \
 
 
 # ── ⑦ 편성 접수 — agent-compose 로 간다. 그룹 단위(v_g_id). videos 를 빼면 그룹 전체, stream_ids 를 빼면 그 영상의 파일 전부. 완료는 callback_url 로 통보
-#    응답: {"comp_id":7,"code":0,"result":"OK"} / 편성 중 3건 이상이면 뒷단에 안 넘기고 409
+#    응답: {"comp_id":7,"code":0,"result":"OK"} / 편성 중 건수가 상한(compose._MAX_BUSY) 이상이면 뒷단에 안 넘기고 409
 # curl -X POST http://127.0.0.1:19000/api/v1/compose \
 #   -H 'Content-Type: application/json' \
 #   -d '{
@@ -91,3 +91,24 @@ curl -X POST http://127.0.0.1:19000/api/v1/video_group \
 # ── ⑨ 편성 상태 조회 (t_compose) — comp_id 필수 (편성 접수 응답의 comp_id). code/result 는 조회 성공 여부, 편성 상태는 status_code/status_name
 #    응답: {"comp_id":7,"code":0,"result":"OK","status_code":4000,"status_name":"편성 완료"} / 없으면 {"comp_id":7,"code":-1,"result":"fail"}
 # curl 'http://127.0.0.1:19000/api/v1/status_compose?comp_id=7'
+
+
+# ── ⑩ 광고 지점 편성 접수 — agent-compose /api/v1/compose-ad 로 간다. 영상 1건(v_id). ad_items 한 줄이 광고 하나:
+#    ad_item_id 를 null 로 두면 카테고리만. 같은 (ad_cate_id, ad_item_id) 두 번은 422.
+#    같은 v_id 가 편성 중(5001 초과 5090 미만)이거나 편성 중 건수가 상한(compose_ad._MAX_BUSY) 이상이면 409. 완료 통보 없음 — ⑪ 로 본다
+#    응답: {"comp_ad_id":7,"code":0,"result":"OK"} / 거절 {"code":-1,"result":"fail","reason":"..."}
+# curl -X POST http://127.0.0.1:19000/api/v1/compose_ad \
+#   -H 'Content-Type: application/json' \
+#   -d '{
+#     "v_id": 1036,
+#     "ad_items": [
+#       {"ad_cate_id": 1, "ad_item_id": 2},
+#       {"ad_cate_id": 1, "ad_item_id": 1},
+#       {"ad_cate_id": 4, "ad_item_id": null}
+#     ]
+#   }'
+
+
+# ── ⑪ 광고 편성 상태 조회 (t_compose_ad) — comp_ad_id 필수. 5000 완료 / 5001 지점 없음 / 5010~5030 진행 / 5900 실패
+#    응답: {"comp_ad_id":7,"code":0,"result":"OK","status_code":5000,"status_name":"광고 지점 찾기 완료"} / 없으면 {"comp_ad_id":7,"code":-1,"result":"fail"}
+# curl 'http://127.0.0.1:19000/api/v1/status_compose_ad?comp_ad_id=7'
