@@ -27,11 +27,13 @@
 | `POST /api/v1/video` | DB | 영상 등록. `v_id` 발급 |
 | `PUT /api/v1/video` | DB | 영상 수정. 보낸 필드만 |
 | `POST /api/v1/video_file` | agent-stt `POST /api/v1/pre_svc` | 파일 등록 + 분석 시작 (download → ffmpeg 추출 → STT). 공정 중인 건이 있으면 409 |
-| `POST /api/v1/compose` | agent-compose `POST /api/v1/compose` | 질의 기반 하이라이트 편성 접수. 결과는 `callback_url` 로. 편성 중 3건 이상이면 409 |
+| `POST /api/v1/compose` | agent-compose `POST /api/v1/compose` | 질의 기반 하이라이트 편성 접수. 결과는 `callback_url` 로. 편성 중 건수가 상한(`compose.py` 의 `_MAX_BUSY`) 이상이면 409 |
+| `POST /api/v1/compose_ad` | agent-compose `POST /api/v1/compose-ad` | 광고 지점 편성 접수. 영상 1건 `{v_id, ad_items[{ad_cate_id, ad_item_id}]}`. 같은 `v_id` 가 편성 중이거나 편성 중 건수가 상한(`compose_ad.py` 의 `_MAX_BUSY`) 이상이면 409. 완료 통보 없음 — `status_compose_ad` 로 본다 |
 | `GET /api/v1/status` | DB | 자막 공정 상태 (t_video_file) |
 | `GET /api/v1/status_compose` | DB | 편성 상태 (t_compose) |
+| `GET /api/v1/status_compose_ad` | DB | 광고 편성 상태 (t_compose_ad). `?comp_ad_id=` |
 
-외부 이름과 뒷단 경로가 다른 건 `video_file → pre_svc` 하나뿐이고, 그 매핑은 `config.py` 가 갖는다.
+외부 이름과 뒷단 경로가 다른 건 `video_file → pre_svc` 와 `compose_ad → compose-ad` 둘이고, 그 매핑은 `config.py` 가 갖는다.
 뒷단 경로가 바뀌면 `config.py` 의 `*_PATH` 한 줄만 고친다.
 
 ## 응답 형식
@@ -102,7 +104,7 @@ HTTP 는 **404** 없음 / **409** 거절·충돌 / **422** 잘못된 값. 본문
 | `videos` | list | 선택. 대상 영상 목록. 없으면 그룹 전체. `v_id` 중복 불가 |
 | `videos[].v_id` | int | 필수. 그룹 안의 영상 |
 | `videos[].stream_ids` | list[str] | 선택. 조각 지정 (각 20자 이하, 중복 불가). 없으면 그 영상의 파일 전부 |
-| `query` | str | 필수. 1~200자. 편성 질의. 예: `홈런 장면만` |
+| `query` | str | 필수. 1~1000자. 편성 질의. 예: `홈런 장면만` |
 | `budget_sec` | int | 선택. 목표 분량(초). 없으면 절단하지 않는다 |
 | `callback_url` | str | 선택. 200자 이하. 완료 시 결과 통보 |
 
@@ -112,7 +114,24 @@ HTTP 는 **404** 없음 / **409** 거절·충돌 / **422** 잘못된 값. 본문
 
 응답은 뒷단 것 그대로: `{"comp_id": 7, "code": 0, "result": "OK"}` — `code` 0 접수 / -1 거절.
 편성은 1~3분 걸리므로 접수만 하고 바로 응답한다. 완료 결과는 `callback_url` 로 통보된다.
-`t_compose` 에 편성 중(`status_code` 4001 초과 4090 미만) 행이 3건 이상이면 뒷단에 넘기지 않고 409 — 본문에 `reason` 과 그 행의 `status_code` / `status_name` 이 붙는다.
+`t_compose` 에 편성 중(`status_code` 4001 초과 4090 미만) 행이 상한(`compose.py` 의 `_MAX_BUSY`) 이상이면 뒷단에 넘기지 않고 409 — 본문에 `reason` 과 그 행의 `status_code` / `status_name` 이 붙는다.
+
+### `POST /api/v1/compose_ad` → agent-compose `compose-ad` — 광고 지점 편성 접수
+
+| 필드 | 타입 | 설명 |
+|---|---|---|
+| `v_id` | int | 필수. 편성 대상 영상 1건 |
+| `ad_items` | list | 필수. 광고 목록, 최대 20줄. 한 줄이 광고 하나. 같은 (`ad_cate_id`, `ad_item_id`) 중복 불가 |
+| `ad_items[].ad_cate_id` | int | 필수. 광고 카테고리 |
+| `ad_items[].ad_item_id` | int | 선택. 광고 상품. `null` 이면 카테고리만 |
+
+```json
+{"v_id": 1036, "ad_items": [{"ad_cate_id": 1, "ad_item_id": 2}, {"ad_cate_id": 4, "ad_item_id": null}]}
+```
+
+응답은 뒷단 것 그대로: `{"comp_ad_id": 7, "code": 0, "result": "OK"}` — `code` 0 접수 / -1 거절.
+완료 통보는 없다 — `GET /api/v1/status_compose_ad` 로 본다.
+같은 `v_id` 가 편성 중(`status_code` 5001 초과 5090 미만)이거나, `t_compose_ad` 에 편성 중 행이 상한(`compose_ad.py` 의 `_MAX_BUSY`) 이상이면 뒷단에 넘기지 않고 409 — 본문에 `reason` 과 그 행의 `status_code` / `status_name` 이 붙는다.
 
 ### `GET /api/v1/status?v_id=1012&stream_id=VOD` — 자막 공정 상태
 
@@ -130,6 +149,14 @@ HTTP 는 **404** 없음 / **409** 거절·충돌 / **422** 잘못된 값. 본문
 {"comp_id": 7, "code": 0, "result": "OK", "status_code": 4000, "status_name": "편성 완료"}
 ```
 
+### `GET /api/v1/status_compose_ad?comp_ad_id=7` — 광고 편성 상태
+
+`comp_ad_id` 필수 (접수 응답의 `comp_ad_id`). 형식은 `status_compose` 와 같다 — `code` / `result` 는 조회 성공 여부, 편성 상태는 `status_code` / `status_name`. 5000 완료 / 5001 지점 없음 / 5010~5030 진행 중 / 5900 실패.
+
+```json
+{"comp_ad_id": 7, "code": 0, "result": "OK", "status_code": 5000, "status_name": "광고 지점 찾기 완료"}
+```
+
 ## 소스 구조
 
 ```
@@ -137,11 +164,11 @@ main.py / config.py
 lib/
   http/      외부에 노출되는 라우터 — 파일명 = 외부 경로 = 핸들러 이름
              video_group.py / video.py            DB CRUD (등록·수정)
-             video_file.py / compose.py           뒷단 프록시 (공정 중이면 409 거절)
-             status_svc.py / status_compose.py    DB 상태 조회
+             video_file.py / compose.py / compose_ad.py              뒷단 프록시 (공정 중이면 409 거절)
+             status_svc.py / status_compose.py / status_compose_ad.py  DB 상태 조회
              http_util.py                         로깅 미들웨어 + 실패 응답 (fail_response / integrity_response)
              schema_resp.py                       응답 베이스 (code / result)
-  rdb/       MariaDB — rdb.py(connect) + 테이블별 t_video_group / t_video / t_video_file / t_compose
+  rdb/       MariaDB — rdb.py(connect) + 테이블별 t_video_group / t_video / t_video_file / t_compose / t_compose_ad
   client/    뒷단 호출. proxy.py 하나 — 라운드로빈 + 그대로 전달 + 요청/응답 로그
   log.py     파일 + 콘솔 로거 (agent-stt 와 동일 포맷)
 ```
@@ -151,12 +178,12 @@ lib/
 
 ## 설계 요점
 
-- **프록시는 가공 없음** — `video_file` / `compose` 는 method / path / query / header / body 를 그대로 넘기고 상태코드·본문을 그대로 돌려준다.
+- **프록시는 가공 없음** — `video_file` / `compose` / `compose_ad` 는 method / path / query / header / body 를 그대로 넘기고 상태코드·본문을 그대로 돌려준다.
   hop-by-hop 헤더(`content-length`, `transfer-encoding`, `connection`)와 이 서버가 다시 붙이는 `date` / `server` 만 뺀다.
   요청 본문은 pydantic 모델로 형식만 검증하고(틀리면 뒷단에 안 가고 422), 통과하면 받은 본문 그대로 보낸다.
 - **등록은 미리 SELECT 로 검사하지 않는다** — FK 없음 / UNIQUE 중복은 DB 가 거르고, 그 IntegrityError 를 `http_util._INTEGRITY` 가 422 / 409 로 옮긴다. DB 메시지는 로그에만.
 - **수정은 보낸 필드만** — `model_dump(exclude_unset=True)`. '안 건드림' 과 '지움(`null`)' 을 구분한다.
-- **공정 중 거절** — 넘기기 전에 `t_video_file` / `t_compose` 를 한 번 보고, 공정 중이면 409. 범위는 `t_video_file.BUSY_WHERE` / `compose._BUSY_WHERE` 한 곳.
+- **공정 중 거절** — 넘기기 전에 `t_video_file` / `t_compose` / `t_compose_ad` 를 한 번 보고, 공정 중이면 409. 범위는 `t_video_file.BUSY_WHERE` / `compose._BUSY_WHERE` / `compose_ad._BUSY_WHERE` 한 곳. 동시 상한은 `compose._MAX_BUSY` / `compose_ad._MAX_BUSY` 로 조정한다.
 - **upstream 은 배열** — nginx `upstream` 블록처럼 `.env` 에 JSON 배열로 적는다. 여러 대면 라운드로빈.
 - **로그** — 프록시는 요청 본문 `[req]`, 응답 본문 `[res]` 를 그대로 찍는다. 미들웨어가 method+URL, 상태코드, 소요시간을 앞뒤로 남긴다.
 - **전부 동기(def)** — 핸들러는 FastAPI 가 스레드풀에서 돌린다. 공유 리소스(httpx.Client / 라운드로빈 이터레이터)는 `main.py` 에서 1회 만들어 `app.state` 에. 로깅 미들웨어만 async (Starlette 제약).
@@ -174,7 +201,7 @@ lib/
 | `STT_UPSTREAM` | agent-stt 서버 배열. 예: `["http://10.0.0.1:19010", "http://10.0.0.2:19010"]` |
 | `COMPOSE_UPSTREAM` | agent-compose 서버 배열. 예: `["http://127.0.0.1:8084"]` |
 
-뒷단 **경로**(`/api/v1/pre_svc`, `/api/v1/compose`)는 `.env` 가 아니라 `config.py` 가 갖는다.
+뒷단 **경로**(`/api/v1/pre_svc`, `/api/v1/compose`, `/api/v1/compose-ad`)는 `.env` 가 아니라 `config.py` 가 갖는다.
 
 로그 파일: `/usr/service/logs/scenemaker/api_external/api_external.log`
 
@@ -187,7 +214,7 @@ uv run uvicorn main:app --host 0.0.0.0 --port 19000   # --reload 로 개발
 
 ## 테스트
 
-`test.sh` 에 복사해 쓸 수 있는 예시가 있다 (그룹 등록·수정 / 영상 등록·수정 / 영상 분석 스트림·VOD / 편성 접수 / 상태 조회 둘).
+`test.sh` 에 복사해 쓸 수 있는 예시가 있다 (그룹 등록·수정 / 영상 등록·수정 / 영상 분석 스트림·VOD / 편성 접수 / 광고 편성 접수 / 상태 조회).
 
 ```bash
 # ① 그룹 등록 — 응답의 v_g_id 를 영상 등록에 쓴다

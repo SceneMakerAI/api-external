@@ -30,7 +30,8 @@ STT_PATH_PRE = "/api/v1/pre_svc"      # 외부 /api/v1/video_file → agent-stt 
 
 # ② agent-compose — 질의 기반 하이라이트 편성
 COMPOSE_UPSTREAM: list[str] = json.loads(os.getenv("COMPOSE_UPSTREAM"))
-COMPOSE_PATH = "/api/v1/compose"      # 외부 POST /api/v1/compose (편성 접수) → agent-compose. 뒷단 경로 바뀌면 여기만.
+COMPOSE_PATH = "/api/v1/compose"        # 외부 POST /api/v1/compose (편성 접수) → agent-compose.
+COMPOSE_AD_PATH = "/api/v1/compose-ad"  # 외부 POST /api/v1/compose_ad (광고 지점 접수) → agent-compose
 
 
 # ── 프록시 타임아웃(초) — 뒷단은 접수 즉시 응답하므로 길게 잡을 이유가 없다.
