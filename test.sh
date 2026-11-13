@@ -45,6 +45,15 @@ curl -X POST http://127.0.0.1:19000/api/v1/video_group \
 #   }'
 
 
+# ── ④-1 영상 삭제 — v_id 만 필수. Milvus 벡터를 지우고 t_video 를 지운다 (파일·분석 결과·편성은 CASCADE). 공정 중이면 409, 없으면 404
+#    응답: {"v_id":1012,"code":0,"result":"OK"}
+# curl -X DELETE http://127.0.0.1:19000/api/v1/video \
+#   -H 'Content-Type: application/json' \
+#   -d '{
+#     "v_id": 1012
+#   }'
+
+
 # ── ⑤ 영상 분석 (스트림 조각, 프로야구) — agent-stt pre_svc 로 간다. stream_yn='Y' 영상은 조각마다 한 번씩, stream_id 로 구분(1top, 1bot, 2top …). 마지막 조각만 last_yn='Y'
 #    응답은 음성·프레임 추출이 끝난 뒤 온다: {"v_id":1012,"stream_id":"1top","code":0,"result":"OK"}
 # curl -X POST http://127.0.0.1:19000/api/v1/video_file \

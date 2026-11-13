@@ -20,6 +20,10 @@ RDB_USER = os.getenv("RDB_USER")
 RDB_PW = os.getenv("RDB_PW")
 RDB_NAME = os.getenv("RDB_NAME")
 
+# ── Milvus — 영상 삭제 때 벡터도 지운다
+MILVUS_URI = os.getenv("MILVUS_URI")
+MILVUS_DB = os.getenv("MILVUS_DB")
+
 
 # ── 뒷단 upstream — nginx upstream 블록처럼 서버 배열. .env 에 JSON 배열 그대로 쓴다.
 #      STT_UPSTREAM=["http://127.0.0.1:19010", "http://10.0.0.2:19010"]

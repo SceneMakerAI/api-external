@@ -2,7 +2,7 @@
 
 **외부 공개 API 게이트웨이** (FastAPI). 외부 요청을 받아 셋으로 나눠 처리한다.
 
-- **등록·수정** (`video_group` / `video`) — DB(MariaDB)에 직접 넣고 이 서버가 답한다.
+- **등록·수정·삭제** (`video_group` / `video`) — DB(MariaDB)에 직접 넣고 이 서버가 답한다. 영상 삭제는 벡터 DB(Milvus)도 지운다.
 - **분석·편성** (`video_file` / `compose`) — 뒷단 에이전트(agent-stt / agent-compose)로 그대로 넘기고
   응답을 그대로 돌려준다. 넘기기 전에 공정 중인 건이 있으면 409 로 거절한다.
 - **상태 조회** (`status` / `status_compose`) — DB 를 읽어 이 서버가 답한다.
@@ -26,6 +26,7 @@
 | `PUT /api/v1/video_group` | DB | 그룹 수정. 보낸 필드만 |
 | `POST /api/v1/video` | DB | 영상 등록. `v_id` 발급 |
 | `PUT /api/v1/video` | DB | 영상 수정. 보낸 필드만 |
+| `DELETE /api/v1/video` | DB + Milvus | 영상 삭제. 파일·분석 결과·편성은 CASCADE, 벡터는 Milvus 에서. 공정 중이면 409 |
 | `POST /api/v1/video_file` | agent-stt `POST /api/v1/pre_svc` | 파일 등록 + 분석 시작 (download → ffmpeg 추출 → STT). 공정 중인 건이 있으면 409 |
 | `POST /api/v1/compose` | agent-compose `POST /api/v1/compose` | 질의 기반 하이라이트 편성 접수. 결과는 `callback_url` 로. 편성 중 3건 이상이면 409 |
 | `GET /api/v1/status` | DB | 자막 공정 상태 (t_video_file) |
@@ -79,6 +80,17 @@ HTTP 는 **404** 없음 / **409** 거절·충돌 / **422** 잘못된 값. 본문
 ### `PUT /api/v1/video` — 영상 수정
 
 `v_id` 만 필수, 나머지 선택. 규칙은 그룹 수정과 같다 (보낸 필드만, `null` 은 지움, 빈 본문 422, 없으면 404).
+
+### `DELETE /api/v1/video` — 영상 삭제
+
+| 필드 | 타입 | 설명 |
+|---|---|---|
+| `v_id` | int | 필수. 지울 영상 |
+
+응답: `{"code": 0, "result": "OK", "v_id": 1012}` — 없는 `v_id` 는 404.
+그 영상의 `t_video_file` 에 공정 중(`status_code` 2000~2090 / 3000~3090) 행이 있으면 지우지 않고 409 — 본문에 그 행의 `stream_id` / `status_code` / `status_name` 이 붙는다.
+Milvus(`sm_sport_baseball` / `sm_drama`) 의 벡터를 먼저 지우고, 그다음 `t_video` 를 지운다 — 파일·분석 결과·편성(`t_compose_clip` / `t_compose_video` 등)은 DB CASCADE 로 같이 지워진다.
+드라마 얼굴 은행(`t_char_drama`)은 그룹 단위라 남는다 (그룹을 지울 때 CASCADE).
 
 ### `POST /api/v1/video_file` → agent-stt `pre_svc` — 파일 등록 + 분석 시작
 
@@ -136,12 +148,13 @@ HTTP 는 **404** 없음 / **409** 거절·충돌 / **422** 잘못된 값. 본문
 main.py / config.py
 lib/
   http/      외부에 노출되는 라우터 — 파일명 = 외부 경로 = 핸들러 이름
-             video_group.py / video.py            DB CRUD (등록·수정)
+             video_group.py / video.py            DB CRUD (등록·수정·삭제)
              video_file.py / compose.py           뒷단 프록시 (공정 중이면 409 거절)
              status_svc.py / status_compose.py    DB 상태 조회
              http_util.py                         로깅 미들웨어 + 실패 응답 (fail_response / integrity_response)
              schema_resp.py                       응답 베이스 (code / result)
   rdb/       MariaDB — rdb.py(connect) + 테이블별 t_video_group / t_video / t_video_file / t_compose
+  vdb/       Milvus — vdb.py(delete) 하나. 영상 삭제 때 벡터만 지운다 (적재는 agent-vision)
   client/    뒷단 호출. proxy.py 하나 — 라운드로빈 + 그대로 전달 + 요청/응답 로그
   log.py     파일 + 콘솔 로거 (agent-stt 와 동일 포맷)
 ```
@@ -157,6 +170,8 @@ lib/
 - **등록은 미리 SELECT 로 검사하지 않는다** — FK 없음 / UNIQUE 중복은 DB 가 거르고, 그 IntegrityError 를 `http_util._INTEGRITY` 가 422 / 409 로 옮긴다. DB 메시지는 로그에만.
 - **수정은 보낸 필드만** — `model_dump(exclude_unset=True)`. '안 건드림' 과 '지움(`null`)' 을 구분한다.
 - **공정 중 거절** — 넘기기 전에 `t_video_file` / `t_compose` 를 한 번 보고, 공정 중이면 409. 범위는 `t_video_file.BUSY_WHERE` / `compose._BUSY_WHERE` 한 곳.
+- **삭제는 CASCADE + Milvus** — DB 는 `t_video_group → t_video → t_video_file → 분석 결과·편성` 이 전부 FK CASCADE 라 부모 한 행만 지운다.
+  Milvus 는 FK 가 없어 `vdb.delete` 가 따로 지운다. 순서는 Milvus 먼저 → DB — DB 가 실패해도 다시 호출하면 둘 다 지워진다 (반대면 v_id 가 사라져 남은 벡터를 못 지운다).
 - **upstream 은 배열** — nginx `upstream` 블록처럼 `.env` 에 JSON 배열로 적는다. 여러 대면 라운드로빈.
 - **로그** — 프록시는 요청 본문 `[req]`, 응답 본문 `[res]` 를 그대로 찍는다. 미들웨어가 method+URL, 상태코드, 소요시간을 앞뒤로 남긴다.
 - **전부 동기(def)** — 핸들러는 FastAPI 가 스레드풀에서 돌린다. 공유 리소스(httpx.Client / 라운드로빈 이터레이터)는 `main.py` 에서 1회 만들어 `app.state` 에. 로깅 미들웨어만 async (Starlette 제약).
@@ -171,6 +186,7 @@ lib/
 |---|---|
 | `HOST` / `PORT` | 이 서버 바인드 주소/포트 |
 | `RDB_HOST` / `RDB_PORT` / `RDB_USER` / `RDB_PW` / `RDB_NAME` | MariaDB. agent-stt 와 같은 DB |
+| `MILVUS_URI` / `MILVUS_DB` | Milvus. 예: `http://10.0.0.1:19530` / `sm_db_dev2`. 컬렉션 이름은 `lib/vdb/vdb.py` 가 갖는다 |
 | `STT_UPSTREAM` | agent-stt 서버 배열. 예: `["http://10.0.0.1:19010", "http://10.0.0.2:19010"]` |
 | `COMPOSE_UPSTREAM` | agent-compose 서버 배열. 예: `["http://127.0.0.1:8084"]` |
 
@@ -187,7 +203,7 @@ uv run uvicorn main:app --host 0.0.0.0 --port 19000   # --reload 로 개발
 
 ## 테스트
 
-`test.sh` 에 복사해 쓸 수 있는 예시가 있다 (그룹 등록·수정 / 영상 등록·수정 / 영상 분석 스트림·VOD / 편성 접수 / 상태 조회 둘).
+`test.sh` 에 복사해 쓸 수 있는 예시가 있다 (그룹 등록·수정 / 영상 등록·수정·삭제 / 영상 분석 스트림·VOD / 편성 접수 / 상태 조회 둘).
 
 ```bash
 # ① 그룹 등록 — 응답의 v_g_id 를 영상 등록에 쓴다
@@ -215,6 +231,7 @@ curl -X POST http://127.0.0.1:19000/api/v1/compose \
 
 - Python >= 3.13, [uv](https://docs.astral.sh/uv/)
 - MariaDB — agent-stt 와 같은 DB (`t_video_group` / `t_video` / `t_video_file` / `t_compose` / `t_code` / `t_category`)
+- Milvus — agent-vision 이 적재하는 벡터 DB (`sm_sport_baseball` / `sm_drama`). 영상 삭제에만 쓴다
 - 뒷단: agent-stt, agent-compose
 
 ## 라이선스
