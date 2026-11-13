@@ -6,7 +6,8 @@ from pydantic import BaseModel, Field
 
 from lib.http import http_util, schema_resp
 from lib.log import get_logger
-from lib.rdb import t_video
+from lib.rdb import t_video, t_video_file
+from lib.vdb import vdb
 
 router = APIRouter(prefix="/api/v1", tags=["video"])
 log = get_logger(__name__)
@@ -27,6 +28,10 @@ class Req_VideoUpdate(Req_Video):
     v_id: int = Field(..., gt=0)
     v_g_id: int | None = Field(None, gt=0)
     name: str | None = Field(None, min_length=1, max_length=50)
+
+
+class Req_VideoDelete(BaseModel):
+    v_id: int = Field(..., gt=0)
 
 
 class Resp_Video(schema_resp.Resp_Base):
@@ -56,6 +61,25 @@ def video_update(req: Req_VideoUpdate):
         n = t_video.update(req.v_id, fields)
     except pymysql.err.IntegrityError as e:
         return http_util.integrity_response(e, "video 수정", v_id=req.v_id)
+    if n == 0:
+        return http_util.fail_response(404, v_id=req.v_id)
+    return Resp_Video(v_id=req.v_id, code=0, result="OK")
+
+
+@router.delete("/video", response_model=Resp_Video)
+def video_delete(req: Req_VideoDelete):
+    log.info(f"video 삭제: v_id={req.v_id}")
+    busy = t_video_file.select_video_files(v_id=req.v_id, where_query=t_video_file.BUSY_WHERE)
+    if busy:
+        b = busy[0]
+        log.warning(f"video 삭제 거절: 공정 중 {len(busy)}건 — v_id={req.v_id} stream_id={b['stream_id']!r} "
+                    f"status_code={b['status_code']}({b['status_name']})")
+        return http_util.fail_response(409, v_id=req.v_id, stream_id=b["stream_id"],
+                                       status_code=b["status_code"], status_name=b["status_name"])
+    if not t_video.select_videos(v_id=req.v_id):
+        return http_util.fail_response(404, v_id=req.v_id)
+    vdb.delete(req.v_id)
+    n = t_video.delete(req.v_id)
     if n == 0:
         return http_util.fail_response(404, v_id=req.v_id)
     return Resp_Video(v_id=req.v_id, code=0, result="OK")

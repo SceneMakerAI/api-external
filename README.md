@@ -2,7 +2,7 @@
 
 An **external-facing API gateway** (FastAPI). Incoming requests fall into three kinds:
 
-- **Register / update** (`video_group` / `video`) — written straight to the DB (MariaDB); this server answers.
+- **Register / update / delete** (`video_group` / `video`) — written straight to the DB (MariaDB); this server answers. Deleting a video also removes its vectors from Milvus.
 - **Analyze / compose** (`video_file` / `compose`) — forwarded untouched to the backend agents
   (agent-stt / agent-compose), response returned untouched. Rejected with 409 before forwarding
   if a job is already in progress.
@@ -29,6 +29,7 @@ narrowed to chosen videos and pieces.
 | `PUT /api/v1/video_group` | DB | Update a group. Only the fields sent |
 | `POST /api/v1/video` | DB | Register a video. Issues `v_id` |
 | `PUT /api/v1/video` | DB | Update a video. Only the fields sent |
+| `DELETE /api/v1/video` | DB + Milvus | Delete a video. Files, analysis results and compositions go by CASCADE; vectors from Milvus. 409 if a job is in progress |
 | `POST /api/v1/video_file` | agent-stt `POST /api/v1/pre_svc` | Attach a file and start analysis (download → ffmpeg extraction → STT). 409 if a job is in progress |
 | `POST /api/v1/compose` | agent-compose `POST /api/v1/compose` | Accept a query-driven highlight composition. Result goes to `callback_url`. 409 if 3+ compositions are running |
 | `GET /api/v1/status` | DB | Subtitle pipeline status (t_video_file) |
@@ -86,6 +87,19 @@ Response: `{"code": 0, "result": "OK", "v_id": 1012}`
 
 Only `v_id` is required; the rest are optional. Same rules as the group update (only fields sent,
 `null` clears, empty body 422, not found 404).
+
+### `DELETE /api/v1/video` — delete a video
+
+| Field | Type | Description |
+|---|---|---|
+| `v_id` | int | required. The video to delete |
+
+Response: `{"code": 0, "result": "OK", "v_id": 1012}` — unknown `v_id` → 404.
+If any `t_video_file` row of that video is in progress (`status_code` 2000–2090 / 3000–3090), nothing is
+deleted and 409 is returned with that row's `stream_id` / `status_code` / `status_name`.
+Vectors in Milvus (`sm_sport_baseball` / `sm_drama`) are deleted first, then `t_video` — files, analysis
+results and compositions (`t_compose_clip` / `t_compose_video`, …) follow by DB CASCADE.
+The drama face bank (`t_char_drama`) is per group, so it stays (it goes by CASCADE when the group is deleted).
 
 ### `POST /api/v1/video_file` → agent-stt `pre_svc` — attach a file and start analysis
 
@@ -150,12 +164,13 @@ lookup succeeded (0 / -1); the composition state comes as `status_code` plus its
 main.py / config.py
 lib/
   http/      externally exposed routers — file name = external path = handler name
-             video_group.py / video.py            DB CRUD (register / update)
+             video_group.py / video.py            DB CRUD (register / update / delete)
              video_file.py / compose.py           backend proxies (409 while a job is in progress)
              status_svc.py / status_compose.py    DB status lookups
              http_util.py                         logging middleware + failure responses (fail_response / integrity_response)
              schema_resp.py                       response base (code / result)
   rdb/       MariaDB — rdb.py (connect) + one module per table: t_video_group / t_video / t_video_file / t_compose
+  vdb/       Milvus — a single vdb.py (delete). Only removes vectors when a video is deleted (agent-vision loads them)
   client/    backend calls. A single proxy.py — round-robin + pass-through + request/response log
   log.py     file + console logger (same format as agent-stt)
 ```
@@ -179,6 +194,10 @@ function opens its own `with connect()`).
 - **Busy rejection** — `t_video_file` / `t_compose` are checked once before forwarding; 409 if a
   job is in progress. The ranges live in one place each: `t_video_file.BUSY_WHERE` /
   `compose._BUSY_WHERE`.
+- **Delete = CASCADE + Milvus** — in the DB, `t_video_group → t_video → t_video_file → analysis results /
+  compositions` are all FK CASCADE, so only the parent row is deleted. Milvus has no FKs, so `vdb.delete`
+  removes vectors separately. Milvus goes first, then the DB — if the DB step fails, calling again cleans
+  both (the other way round, the `v_id` would be gone and leftover vectors could not be found).
 - **Upstream is an array** — written as a JSON array in `.env`, like an nginx `upstream` block.
   Multiple servers are round-robined.
 - **Logging** — proxies log the request body as `[req]` and the response body as `[res]`, verbatim.
@@ -200,6 +219,7 @@ missing one kills startup.
 |---|---|
 | `HOST` / `PORT` | bind address/port for this server |
 | `RDB_HOST` / `RDB_PORT` / `RDB_USER` / `RDB_PW` / `RDB_NAME` | MariaDB. The same DB agent-stt uses |
+| `MILVUS_URI` / `MILVUS_DB` | Milvus, e.g. `http://10.0.0.1:19530` / `sm_db_dev2`. Collection names live in `lib/vdb/vdb.py` |
 | `STT_UPSTREAM` | agent-stt server array, e.g. `["http://10.0.0.1:19010", "http://10.0.0.2:19010"]` |
 | `COMPOSE_UPSTREAM` | agent-compose server array, e.g. `["http://127.0.0.1:8084"]` |
 
@@ -216,7 +236,7 @@ uv run uvicorn main:app --host 0.0.0.0 --port 19000   # add --reload for develop
 
 ## Testing
 
-See `test.sh` for ready-to-paste examples (group register/update, video register/update,
+See `test.sh` for ready-to-paste examples (group register/update, video register/update/delete,
 analysis for a stream piece and for VOD, composition accept, both status lookups).
 
 ```bash
@@ -245,6 +265,7 @@ curl -X POST http://127.0.0.1:19000/api/v1/compose \
 
 - Python >= 3.13, [uv](https://docs.astral.sh/uv/)
 - MariaDB — the same DB agent-stt uses (`t_video_group` / `t_video` / `t_video_file` / `t_compose` / `t_code` / `t_category`)
+- Milvus — the vector DB agent-vision loads (`sm_sport_baseball` / `sm_drama`). Used only for video deletion
 - Backends: agent-stt, agent-compose
 
 ## License
